@@ -30,7 +30,7 @@ autonomous-hdb-deepagents/
 │
 ├── src/
 │   └── autonomous_hdb_deepagents/
-│       │   __init__.py
+│       │   └── __init__.py
 │       │
 │       ├── agent/
 │       │   ├── __init__.py
@@ -283,12 +283,12 @@ You must have these MCP tools available:
 list-hdb-flats
 ```
 
-## MRT → HDB town mapping
+## 2. MRT → HDB town mapping
 ```text
 get-mrt-towns
 ```
 
-## Geospatial nearest-mrt search
+## 3. Geospatial nearest-mrt search
 ```text
 geospatial-query
 ```
@@ -314,6 +314,7 @@ This section explains how to run the entire system—**database, toolbox, backen
 
 The final architecture looks like this:
 
+```text
 ┌──────────────────────────┐
 │      Docker Host         │
 │                          │
@@ -337,6 +338,7 @@ The final architecture looks like this:
 │  │  Gradio UI   │        │
 │  └──────────────┘        │
 └──────────────────────────┘
+```
 
 ## 🐘 1. Postgres Setup (Auto-loaded Data)
 
