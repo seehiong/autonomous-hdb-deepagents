@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: hdb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hdb_database
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "2345:5432"
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./db/data:/var/lib/postgresql/data/import:ro
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hdb_database"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    image: seehiong/autonomous-hdb-deepagents-backend:latest
+    container_name: hdb-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/hdb_database
+      TOOLBOX_URL: http://localhost:5000 
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    ports:
+      - "8000:8000"
+      - "7860:7860"
+      - "5000:5000"
+    volumes:
+      - ./tools.yaml:/app/tools.yaml:ro
+      - ./start.sh:/app/start.sh:ro
+    command: ["bash", "/app/start.sh"]
+
+volumes:
+  postgres_data:

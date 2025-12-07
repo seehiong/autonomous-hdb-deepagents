@@ -1,0 +1,155 @@
+sources:
+  my-pg-source:
+    kind: postgres
+    host: postgres
+    port: 5432
+    database: hdb_database
+    user: postgres
+    password: postgres
+
+tools:
+  list-hdb-flats:
+    kind: postgres-sql
+    source: my-pg-source
+    description: >
+      Finds resale flats by town, price, and type.
+      ALWAYS returns coordinates (lat, lon).
+    parameters:
+      - name: town
+        type: string
+        description: Town name (e.g., 'ANG MO KIO').
+      - name: max_price
+        type: float
+        description: Maximum resale price (e.g., 600000).
+      - name: flat_type
+        type: string
+        description: Optional flat type (e.g., '4 ROOM').
+    statement: >
+      WITH unique_properties AS (
+        SELECT
+          blk_no, street, lat, lon,
+          ROW_NUMBER() OVER (PARTITION BY blk_no, street ORDER BY lat, lon) as rn
+        FROM public.hdb_property_info
+      )
+      SELECT
+        t.town, t.block, t.street_name, t.flat_type, t.resale_price,
+        p.lat, p.lon
+      FROM public.hdb_combined_resale_flat_prices t
+      LEFT JOIN unique_properties p
+        ON t.block = p.blk_no AND t.street_name = p.street AND p.rn = 1
+      WHERE t.town ILIKE '%' || $1::text || '%'
+        AND ($2::float IS NULL OR t.resale_price <= $2::float)
+        AND (
+            $3::text IS NULL
+            OR LOWER(REPLACE(t.flat_type, ' ', '')) =
+              LOWER(REPLACE($3::text, ' ', ''))
+        )
+      ORDER BY t.month DESC
+      LIMIT 30;
+
+
+  geospatial-query:
+    kind: postgres-sql
+    source: my-pg-source
+    description: >
+      Analyzes surroundings. Returns standardized rows: [qtype, label, info, metric, dist_m].
+    parameters:
+      - name: mode
+        type: string
+        description: "Mode: nearest_mrt, nearby_parks, nearby_schools, walkability_score"
+      - name: lat
+        type: float
+        description: "Latitude of the location"
+      - name: lon
+        type: float
+        description: "Longitude of the location"
+      - name: radius
+        type: float
+        default: 500.0
+        description: "Search radius in meters"
+    statement: >
+      WITH base_point AS (
+        SELECT ST_SetSRID(ST_Point($3::float, $2::float), 4326) AS geom
+      ),
+      nearest_mrt AS (
+        SELECT
+          'nearest_mrt'::text AS qtype,
+          station_name::text AS label,
+          ('Exit: ' || exit_code)::text AS info,
+          NULL::float AS metric,
+          ST_Distance(m.geom_4326, bp.geom) AS dist_m
+        FROM public.mrt_exits m, base_point bp
+        WHERE $1::text = 'nearest_mrt'
+        ORDER BY m.geom_4326 <-> bp.geom LIMIT 1
+      ),
+      nearby_parks AS (
+        SELECT
+          'nearby_parks'::text,
+          name::text,
+          ('Park ID: ' || objectid)::text,
+          NULL::float,
+          ST_Distance(p.geom_4326, bp.geom)
+        FROM public.sg_parks p, base_point bp
+        WHERE $1::text = 'nearby_parks' 
+        AND ST_DWithin(p.geom_4326, bp.geom, $4::float)
+      ),
+      nearby_schools AS (
+        SELECT
+          'nearby_schools'::text,
+          school_name::text,
+          address::text,
+          NULL::float,
+          ST_Distance(s.geom_4326, bp.geom)
+        FROM public.sg_schools s, base_point bp
+        WHERE $1::text = 'nearby_schools'
+        AND s.geom_4326 IS NOT NULL
+        AND ST_DWithin(s.geom_4326, bp.geom, $4::float)
+      ),
+      walkability AS (
+        SELECT
+          'walkability_score'::text,
+          'Walk Score'::text,
+          'Amenities Proximity'::text,
+          (
+            (CASE WHEN EXISTS (SELECT 1 FROM public.mrt_exits m WHERE ST_DWithin(m.geom_4326, bp.geom, 400)) THEN 50 ELSE 0 END) + 
+            (LEAST(COUNT(s.school_name), 5) * 5) + 
+            (LEAST(COUNT(p.name), 5) * 5)
+          )::float,
+          0::float
+        FROM base_point bp
+        LEFT JOIN public.sg_schools s ON ST_DWithin(s.geom_4326, bp.geom, 800)
+        LEFT JOIN public.sg_parks p ON ST_DWithin(p.geom_4326, bp.geom, 500)
+        WHERE $1::text = 'walkability_score'
+        GROUP BY bp.geom
+      )
+      SELECT * FROM nearest_mrt
+      UNION ALL SELECT * FROM nearby_parks
+      UNION ALL SELECT * FROM nearby_schools
+      UNION ALL SELECT * FROM walkability
+      ORDER BY dist_m ASC NULLS LAST
+      LIMIT 50;
+
+
+  get-mrt-towns:
+    kind: postgres-sql
+    source: my-pg-source
+    description: >
+      Maps an MRT station to nearby HDB towns and their distances.
+      Returns: station_name, town, num_blocks, min_dist_m.
+      Use to resolve user's MRT mention to the best town(s) for flat search.
+    parameters:
+      - name: mrt_station
+        type: string
+        description: >
+          MRT station name (e.g., 'BUKIT BATOK', 'TOA PAYOH', 'BEDOK').
+          Partial match supported (e.g., 'BUKIT' will match 'BUKIT BATOK').
+    statement: >
+      SELECT
+        station_name,
+        town,
+        num_blocks,
+        min_dist_m
+      FROM public.mrt_to_hdb_town
+      WHERE UPPER(station_name) LIKE UPPER('%' || $1::text || '%')
+      ORDER BY min_dist_m ASC
+      LIMIT 5;

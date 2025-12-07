@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autonomous-hdb-deepagents"
+version = "0.1.0"
+description = "Autonomous DeepAgent for HDB resale & MRT geospatial analysis"
+requires-python = ">=3.11"
+dependencies = [
+    "deepagents",
+    "langchain-core",
+    "langchain-openai",
+    "langgraph",
+    "toolbox-langchain",
+    "pydantic",
+    "watchdog>=6.0.0",
+    "uvicorn>=0.38.0",
+    "fastapi>=0.124.0",
+    "gradio>=6.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "python-dotenv",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autonomous_hdb_deepagents"]
+
+[tool.uv]
+managed = true
+
+[tool.uv.sources]
+autonomous-hdb-deepagents = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "autonomous-hdb-deepagents",
+]
